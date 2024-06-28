@@ -2,7 +2,7 @@
 
 ## Many-to-one relationships
 
-สำหรับการนิยาม Many-to-many Relationships จะใช้การประกาศ ForeignKey เป็น field ใน models
+สำหรับการนิยาม Many-to-one Relationships จะใช้การประกาศ ForeignKey เป็น field ใน models
 
 ต่อเนื่องจากตัวอย่าง `books/models.py` ใน model `Book` จะเห็นว่ามีการประกาศ ForeignKey เก็บ `publisher_id` ซึ่งชี้ไปยัง instance ใน model `Publisher`
 

@@ -1,6 +1,6 @@
 # Query Expressions
 
-[Django Doc](https://docs.djangoproject.com/en/5.0/ref/models/expressions/#query-expressions)
+[Django Doc](https://docs.djangoproject.com/en/5.2/ref/models/expressions/#query-expressions)
 
 ORM ของ Django นั้น support การใช้งาน function ในการคำนวณ (+, -, *, /) การ aggregate ต่างๆ เช่น SUM(), MIN(), MAX(), COUNT(), AVG() และการทำ Subquery
 
@@ -70,25 +70,55 @@ class Company(models.Model):
 30
 >>> company.chairs_needed
 20
-
-# Create a new company using expressions.
->>> company = Company.objects.create(name="Google", ticker=Upper(Value("goog")))
-# Be sure to refresh it if you need to access the field.
->>> company.refresh_from_db()
->>> company.ticker
-'GOOG'
-
-# Expressions can also be used in order_by(), either directly
->>> Company.objects.order_by(Length("name").asc())
->>> Company.objects.order_by(Length("name").desc())
-
-# Lookup expressions can also be used directly in filters
->>> Company.objects.filter(GreaterThan(F("num_employees"), F("num_chairs")))
-# or annotations.
->>> Company.objects.annotate(
-...     need_chairs=GreaterThan(F("num_employees"), F("num_chairs")),
-... )
 ```
+
+Django มี function ของ database ให้เรียกใช้ หลากหลาย เช่น
+
+- Greatest: เปรียบเทียบค่า 2 ค่าโดยจะ return ค่าที่มากที่สุด (สามารถเปรียบเทียบได้มากกว่า 2 ค่า)
+
+```python
+class Blog(models.Model):
+    body = models.TextField()
+    modified = models.DateTimeField(auto_now=True)
+
+
+class Comment(models.Model):
+    body = models.TextField()
+    modified = models.DateTimeField(auto_now=True)
+    blog = models.ForeignKey(Blog, on_delete=models.CASCADE)
+
+---------------
+
+>>> from django.db.models.functions import Greatest
+>>> blog = Blog.objects.create(body="Greatest is the best.")
+>>> comment = Comment.objects.create(body="No, Least is better.", blog=blog)
+>>> comments = Comment.objects.annotate(last_updated=Greatest("modified", "blog__modified"))
+```
+
+- Now: เป็นเวลา server ณ เวลาปัจจุบัน
+
+```python
+>>> from django.db.models.functions import Now
+>>> Article.objects.filter(published__lte=Now())
+```
+
+- Concat: ต่อค่าใน CharField หรือ TextField 2 ตัวหรือมากกว่าเข้าด้วยกัน
+
+```python
+>>> # Get the display name as "name (goes_by)"
+>>> from django.db.models import CharField, Value as V
+>>> from django.db.models.functions import Concat
+>>> Author.objects.create(name="Margaret Smith", goes_by="Maggie")
+>>> author = Author.objects.annotate(
+...     screen_name=Concat("name", V(" ("), "goes_by", V(")"), output_field=CharField())
+... ).get()
+>>> print(author.screen_name)
+Margaret Smith (Maggie)
+```
+
+ยังมีให้เลือกใช้อีกมากมาย สามารถดูใน document ได้เลยครับ
+
+[Doc - Database Functions](https://docs.djangoproject.com/en/5.2/ref/models/database-functions/)
 
 ## Aggregate expression
 
@@ -179,4 +209,113 @@ class Store(models.Model):
 >>> pubs = Publisher.objects.annotate(num_books=Count("book")).order_by("-num_books")[:5]
 >>> pubs[0].num_books
 39
+```
+
+## Subquery Expressions
+
+นอกจากนั้น Django ORM ยังรองรับการทำ Subquery อีกด้วย
+
+Subquery คืออะไร? เรามาดูตัวอย่างกัน 
+
+Credit: [skooldio](https://blog.skooldio.com/how-to-use-subquery/)
+
+สมมติเรามีตารางข้อมูลดังนี้
+
+| name                       | studio    | year | gross |
+|----------------------------|-----------|------|-------|
+| ก้านกล้วย                  | กันตนา     | 2549 | 93.63 |
+| ก้านกล้วย 2               | กันตนา     | 2552 | 79.26 |
+| ฉลาดเกมส์โกง               | จีดีเอช ห้าห้าเก้า | 2560 | 112.15 |
+| แฟนเดย์..แฟนกันแค่วันเดียว | จีดีเอช ห้าห้าเก้า | 2559 | 110.91 |
+| พี่มาก..พระโขนง             | จีดีเอช     | 2556 | 559.59 |
+
+เราสามารถเขียน Subquery ได้ดังตัวอย่าง
+
+```sql
+SELECT *,
+      ( SELECT MAX(gross)
+        FROM thai_boxoffice
+        WHERE studio = m.studio
+      ) AS studio_max_gross
+FROM thai_boxoffice AS m 
+ORDER BY studio, gross
+```
+
+ซึ่งจะได้ผลลัพธ์ดังนี้
+
+| name                       | studio    | year | gross | studio_max_gross |
+|----------------------------|-----------|------|-------|------------------|
+| ก้านกล้วย                  | กันตนา     | 2549 | 93.63 | 93.63            |
+| ก้านกล้วย 2               | กันตนา     | 2552 | 79.26 | 93.63            |
+| ฉลาดเกมส์โกง               | จีดีเอช ห้าห้าเก้า | 2560 | 112.15 | 112.15           |
+| แฟนเดย์..แฟนกันแค่วันเดียว | จีดีเอช ห้าห้าเก้า | 2559 | 110.91 | 112.15           |
+| พี่มาก..พระโขนง             | จีดีเอช     | 2556 | 559.59 | 559.59           |
+
+
+```sql
+SELECT *
+FROM thai_boxoffice AS m 
+WHERE gross = ( SELECT MAX(gross)
+                FROM thai_boxoffice
+                WHERE studio = m.studio
+              )
+ORDER BY studio
+```
+
+ซึ่งจะได้ผลลัพธ์ดังนี้
+
+| name                       | studio              | year | gross |
+|----------------------------|---------------------|------|-------|
+| ก้านกล้วย                  | กันตนา               | 2549 | 93.63 |
+| ฉลาดเกมส์โกง               | จีดีเอช ห้าห้าเก้า   | 2560 | 112.15 |
+| พี่มาก..พระโขนง             | จีดีเอช               | 2556 | 559.59 |
+
+
+เข้าใจเรื่อง Subquery กันแล้วทีนี้เรามาดูกันว่า เราจำใช้งาน Subquery ใน Django ได้อย่างไร
+
+สมมติเรามี models ดังนี้
+
+```python
+class Blog(models.Model):
+    body = models.TextField()
+    modified = models.DateTimeField(auto_now=True)
+
+
+class Comment(models.Model):
+    body = models.TextField()
+    length = models.IntegerField(default=0)
+    email = models.EmailField(null=True)
+    modified = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    blog = models.ForeignKey(Blog, on_delete=models.CASCADE)
+```
+
+ถ้าเราต้องการหา email ของคนที่มา comment ใน blog ล่าสุด สามารถเขียนได้ดังนี้
+
+```python
+>>> from django.db.models import OuterRef, Subquery
+>>> newest = Comment.objects.filter(blog=OuterRef("pk")).order_by("-created_at")
+>>> Blog.objects.annotate(newest_commenter_email=Subquery(newest.values("email")[:1]))
+```
+
+จะแปลงเป็น SQL ได้ดังนี้
+
+```sql
+SELECT "blog"."id", (
+    SELECT U0."email"
+    FROM "comment" U0
+    WHERE U0."blog_id" = ("blog"."id")
+    ORDER BY U0."created_at" DESC LIMIT 1
+) AS "newest_commenter_email" FROM "blog"
+```
+
+### Using aggregates within a Subquery expression
+
+สมมติเราต้องการหาว่า blog แต่ละ blog นั้นมีขนาดความยาวของ comment รวมเป็นเท่าไหร่
+
+```python
+>>> from django.db.models import OuterRef, Subquery, Sum
+>>> comments = Comment.objects.filter(blog=OuterRef("pk")).order_by().values("blog")
+>>> total_comments = comments.annotate(total=Sum("length")).values("total")
+>>> Post.objects.annotate(comment_length=Subquery(total_comments))
 ```

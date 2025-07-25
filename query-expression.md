@@ -211,6 +211,97 @@ class Store(models.Model):
 39
 ```
 
+### Generating aggregates over a QuerySet
+
+ในกรณีที่เราต้องการคำนวณค่า summary ของ objects ทุกตัวใน QuerySet สามารถทำได้โดยการเรียก `aggregate()` และระบุว่าต้องการคำนวณค่า summary อะไร เช่น `Avg()`, `Max()`, `Min()`
+
+```python
+>>> from django.db.models import Avg, Max, Min
+>>> Book.objects.all().aggregate(Avg("price"))
+{'price__avg': 34.35}
+
+>>> Book.objects.aggregate(Avg("price"), Max("price"), Min("price"))
+{'price__avg': 34.35, 'price__max': Decimal('81.20'), 'price__min': Decimal('12.99')}
+```
+
+### Generating aggregates for *each item* in a QuerySet
+
+สำหรับกรณีที่ต้องการคำนวณค่า summary ของแต่ละ record ใน QuerySet สามารถทำได้โดยการเรียก `annotate()` ยกตัวอย่างเช่นถ้าเราต้องการหาจำนวนผู้เขียน (`Author`) ของหนังสือ (`Book`) แต่ละเล่ม
+
+```python
+# Build an annotated queryset
+>>> from django.db.models import Count
+>>> q = Book.objects.annotate(num_authors=Count("authors"))
+# Interrogate the first object in the queryset
+>>> q[0]
+<Book: The Definitive Guide to Django>
+>>> q[0].num_authors
+2
+# Interrogate the second object in the queryset
+>>> q[1]
+<Book: Practical Django Projects>
+>>> q[1].num_authors
+1
+```
+
+เราสามารถ annotate หลายค่าได้ดังนี้
+
+```python
+>>> book = Book.objects.first()
+>>> book.authors.count()
+2
+>>> book.store_set.count()
+3
+>>> q = Book.objects.annotate(Count("authors"), Count("store"))
+>>> q[0].authors__count
+6
+>>> q[0].store__count
+6
+```
+
+การ aggregate หลาย field จะได้ข้อมูลที่ไม่ถูกต้องเพราะเป็นการ join ทำให้ข้อมูลซ้ำซ้อน โดยสามารถแก้ไขได้โดยใช้ `distinct=True`
+
+```python
+>>> q = Book.objects.annotate(
+...     Count("authors", distinct=True), Count("store", distinct=True)
+... )
+>>> q[0].authors__count
+2
+>>> q[0].store__count
+3
+```
+
+เรายังสามารถใช้ `__` (double underscore notation) ได้ เพื่อ aggregate หรือ annotate ข้อมูลในตารางอื่นที่มีความสัมพันธ์กันอยู่ได้ เช่น
+
+```python
+>>> from django.db.models import Max, Min
+>>> Store.objects.annotate(min_price=Min("books__price"), max_price=Max("books__price"))
+
+>>> Store.objects.aggregate(youngest_age=Min("books__authors__age"))
+```
+
+### Using values()
+
+การทำ aggregation group by สามารถทำได้โดยการใช้ `values()` เช่น
+
+```python
+>>> Author.objects.annotate(average_rating=Avg("book__rating"))
+
+>>> Author.objects.values("name").annotate(average_rating=Avg("book__rating"))
+```
+
+ทั้งสอง statement ด้านบนนั้นแตกต่างกัน โดย statement แรกจะเป็นการ aggregate ค่า rating ของหนังสือของผู้เขียนทุกคนใน QuerySet แต่ใน stattment ที่สองจะเป็นการ ggregate ค่า rating ของหนังสือของผู้เขียนโดย group by `name` (ถ้ามีผู้เขียนที่ชื่อเหมือนกันจะนับเป็นคนเดียวกัน)
+
+**การ group by ด้วย values() จะต้องเรียกใช้ values() ก่อน annotate()**
+
+โดยถ้าวาง values() ไว้หลัง annotate จะเป็นการแปลง QuerySet เป็น list of dictionaries ซึ่งไม่เป็นการ group by
+
+```python
+>>> Author.objects.annotate(average_rating=Avg("book__rating")).values(
+...     "name", "average_rating"
+... )
+```
+
 ## Subquery Expressions
 
 นอกจากนั้น Django ORM ยังรองรับการทำ Subquery อีกด้วย
